@@ -83,4 +83,4 @@ You can start off by providing a game url.
 Perfect example: https://www.kongregate.com/games/player_03/run-3\n
 ''')
 while True:
-    processInput(raw_input("Input: "))
+    processInput(input("Input: "))

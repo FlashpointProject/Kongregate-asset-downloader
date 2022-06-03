@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from base64 import b64encode
 from multiprocessing.pool import ThreadPool
 
-from debugLib import trace
+from backend.debugLib import trace
 
 def getUserSettings():
     with open(SETTINGS_PATH, "r") as settings:
