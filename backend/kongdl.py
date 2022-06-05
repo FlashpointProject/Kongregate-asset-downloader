@@ -140,7 +140,7 @@ def extractData(soup):
         thumbs = getThumbs(thumbUrls)
 
     return POOL.starmap(
-        extractData_inner, padAll([levels, meta, plays, ratings, thumbs])
+        extractData_inner, zip(*padAll([levels, meta, plays, ratings, thumbs]))
     )
 
 
@@ -179,7 +179,7 @@ def extractData_inner(level, meta, plays, rating, thumb):
 # Padding occurs with padWith, which is None by default.
 def padAll(arrays, padWith=None):
     highlen = max((len(arr) for arr in arrays))
-    return (arr + [padWith] * (highlen - len(arr)) for arr in arrays)
+    return [arr + [padWith] * (highlen - len(arr)) for arr in arrays]
 
 
 # Make sure every folder required exists
