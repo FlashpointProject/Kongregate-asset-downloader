@@ -1,17 +1,17 @@
-import requests
-from requests import ConnectionError
-import os
 import json
-import zlib
+import os
+import re
 import time
-from bs4 import BeautifulSoup
+import zlib
 from base64 import b64encode
 from multiprocessing.pool import ThreadPool
-import re
 
-# TODO: make all I/O async?
+import requests
+from bs4 import BeautifulSoup
 
 from backend.debugLib import trace
+
+# TODO: make all I/O async?
 
 
 def getUserSettings():
@@ -222,7 +222,7 @@ def retryRequest(url, params={}, wait_sec: float = 0.1, max_tries=10):
             if r.status_code == 200:
                 return r
             trace("warn", "retryRequest status_code: %s, retrying..." % r.status_code)
-        except ConnectionError:
+        except requests.ConnectionError:
             trace("warn", "retryRequest ConnectionError, retrying...")
         time.sleep(wait_sec)
 
