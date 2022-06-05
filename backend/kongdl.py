@@ -41,10 +41,6 @@ def getInsideBrackets(text):
     # This should be bullet proof against script kiddie levelnames
     return text[ text.index("{") : text.rindex("}); return false") + 1 ]
 
-# Construct base html soup
-def makeSoup(html):
-    return BeautifulSoup(html, "html.parser")
-
 # Return list of r.content using 10 threads pool
 def getThumbs(urls):
     # TODO: using imap instead of map is pointless if urls isn't a generator.
@@ -52,18 +48,17 @@ def getThumbs(urls):
     return [thumb for thumb in imapThumbs]
 
 # Return r.content for given url
-# TODO: timeout to avoid being blocked.
-# TODO: soft-fail at something lower than max recursion depth?
-# TODO: make this a loop instead of recursive nonsense.
-def getThumb(url):
-    try:
-        r = requests.get(url)
-        if r.status_code == 200:
-            return r.content
-        trace("warn", "getThumb status_code: %s, retrying..."%r.status_code)
-    except requests.ConnectionError:
-        trace("warn", "getThumb ConnectionError, retrying...")
-    return getThumb(url)
+def getThumb(url, wait_sec: float = 0.1, max_tries = 10):
+    # Quick syntax for a for-loop. Value is discarded, because we don't need it.
+    for __ in range(max_tries):
+        try:
+            r = requests.get(url)
+            if r.status_code == 200:
+                return b64encode(r.content).decode('ascii')
+            trace("warn", "getThumb status_code: %s, retrying..."%r.status_code)
+        except requests.ConnectionError:
+            trace("warn", "getThumb ConnectionError, retrying...")
+        time.sleep(wait_sec)
 
 # View all dictionary items for levels
 def debugLevels(levels):
@@ -76,27 +71,21 @@ def debugLevels(levels):
 def getContentTypes(author, game):
     '''
     r = retryRequest("https://www.kongregate.com/games/%s/%s"%(author, game))
-    soup = makeSoup(r.text)
+    soup = BeautifulSoup(r.text, "html.parser")
     # Objective: //*[@id="game_shared_contents"]/p/a
     #            #game_shared_contents > p > a
     '''
     # TODO - room for improvement here.
     # TODO: check that this shouldn't be a retryRequest?
     r = requests.get("https://www.kongregate.com/games/%s/%s"%(author, game))
-    # TODO: check what this is doing
+    # TODO: check what this is doing.
     results = re.findall("holodeck.showSharedContentsIndex(.*)", r.text)
-    # TODO: generator comprehension syntax?
-    results = [result.replace("&quot;",'"') for result in results]
-    # TODO: Seems incredibly fragile and brittle.
-    results = [res[res.index('"')+1:res.index('"')+res.index(")")-2] for res in results]
-    # TODO: aaah inefficient! This is O(n^2), I can do it in O(n) just by sorting. 
-    # Or, even better, just use a set from beginning.
-    dupecheck = []
-    for result in results:
-        if result not in dupecheck:
-            dupecheck.append(result)
-    # TODO: Can we return a generator here?
-    return dupecheck
+    results2 = (result.replace("&quot;",'"') for result in results)
+    deduped = set()
+    for res in results2:
+        # TODO: Seems incredibly fragile and brittle.
+        deduped.add(res[res.index('"')+1:res.index('"')+res.index(")")-2])
+    return list(deduped)
 
 # Extract important data out of html
 # TODO: generator comprehension syntax, please.
@@ -114,6 +103,13 @@ def extractData(soup):
     plays = [int(load.find("em").text.replace("Loaded ","").replace(" times","").replace("time",""))
              for load in soup.find_all("dd", class_="load_count")]
     ratings = [rating for rating in soup.find_all("div", class_="shared_content_rating")]
+
+    if len(levels) != len(meta) or len(levels) != len(plays) or len(levels) != len(ratings):
+        print("Not all lens are the same!")
+        print(len(levels))
+        print(len(meta))
+        print(len(plays))
+        print(len(ratings))
 
     if ENABLE_THUMBS:
         # TODO: this should be a generator. Also, this search pattern looks *very* brittle.
@@ -139,8 +135,7 @@ def extractData(soup):
         if rating != None:
             level["rating"] = float(rating.text.replace(" Avg.)","").replace("(",""))
         if ENABLE_THUMBS:
-            # TODO: ugh make this be done in-pool, not here!
-            level["thumb"] = b64encode(thumbs[x]).decode('ascii')
+            level["thumb"] = thumbs[x]
         extractedData.append(level)
 
     return extractedData
@@ -174,10 +169,8 @@ def saveData(author, game, data):
         exit()
 
 # Retry request forever until success
-# TODO: timeout so that we don't get filtered by an IDS.
-# TODO: soft-fail instead of looping forever?
-def retryRequest(url, params={}):
-    while True:
+def retryRequest(url, params={}, wait_sec: float = 0.1, max_tries = 10):
+    for __ in range(max_tries):
         try:
             r = requests.get(url, params=params)
             if r.status_code == 200:
@@ -185,34 +178,31 @@ def retryRequest(url, params={}):
             trace("warn", "retryRequest status_code: %s, retrying..."%r.status_code)
         except ConnectionError:
             trace("warn", "retryRequest ConnectionError, retrying...")
+        time.sleep(wait_sec)
 
 # Fetches all currently active asset id's
 def main(author, game):
-    # TODO: hard coded values?
-    contentTypes = getContentTypes("player_03", "run-3")
+    contentTypes = getContentTypes(author, game)
     trace("info", "Found %s content types: %s"%(len(contentTypes), contentTypes))
+    folderCheck(author, game)
+    # Pre-template the first two, they don't change.
+    templateUrl = "http://www.kongregate.com/games/%s/%s"%(author, game)
     for contentType in contentTypes:
-        # TODO: ummm, why are we doing this every time? The inputs don't change.
-        folderCheck(author, game)
-        # TODO: template the first two fields of this beforehand, so that we only repeat one replace.
-        fetchUrl = "http://www.kongregate.com/games/%s/%s/shared/%s"%(author, game, contentType)
-        r = retryRequest(fetchUrl, params={"srid":"last"})
-        soup = makeSoup(r.text)
+        # Template in the last field - the one that changes.
+        nextUrl = templateUrl + "/shared/%s" % contentType
+        r = retryRequest(nextUrl, params={"srid":"last"})
+        soup = BeautifulSoup(r.text, "html.parser")
         levels = extractData(soup)
         # Obtain lowest id while at last page.
         finalId = min([int(level["id"]) for level in levels])
         # Not providing srid brings us to first page
-        # TODO: point of this? why do we have fetchUrl at all?
-        nextUrl = fetchUrl
         while True:
             r = retryRequest(nextUrl)
-            soup = makeSoup(r.text)
+            soup = BeautifulSoup(r.text, "html.parser")
             levels = extractData(soup)
-            # For each level entry, save. TODO: this is confusing syntax. Fix it.
-            # Also TODO: paralellize this.
-            [saveData(author, game, level) for level in levels]
-            # TODO: generator.
-            lowestId = min([int(level["id"]) for level in levels])
+            # For each level entry, save. We can do it in parallel.
+            POOL.map(lambda level: saveData(author, game, level), levels)
+            lowestId = min((int(level["id"]) for level in levels))
             if lowestId == finalId:
                 trace("info", "Final id has been found. Enjoy your archive!")
                 break
