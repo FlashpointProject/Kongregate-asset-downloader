@@ -77,7 +77,7 @@ def debugLevels(levels):
 def getContentTypes(author, game):
     """
     r = retryRequest("https://www.kongregate.com/games/%s/%s"%(author, game))
-    soup = BeautifulSoup(r.text, "html.parser")
+    soup = BeautifulSoup(r.text, "html5lib")
     # Objective: //*[@id="game_shared_contents"]/p/a
     #            #game_shared_contents > p > a
     """
@@ -89,8 +89,9 @@ def getContentTypes(author, game):
     results2 = (result.replace("&quot;", '"') for result in results)
     deduped = set()
     for res in results2:
-        # TODO: Seems incredibly fragile and brittle.
-        deduped.add(res[res.index('"') + 1 : res.index('"') + res.index(")") - 2])
+        # The content type will be surrounded by quotes.
+        temp = res[res.index('"')+1:]
+        deduped.add(temp[:temp.index('"')])
     return list(deduped)
 
 
@@ -238,14 +239,14 @@ def main(author, game):
         # Template in the last field - the one that changes.
         nextUrl = templateUrl + "/shared/%s" % contentType
         r = retryRequest(nextUrl, params={"srid": "last"})
-        soup = BeautifulSoup(r.text, "html.parser")
+        soup = BeautifulSoup(r.text, "html5lib")
         levels = extractData(soup)
         # Obtain lowest id while at last page.
         finalId = min([int(level["id"]) for level in levels])
         # Not providing srid brings us to first page
         while True:
             r = retryRequest(nextUrl)
-            soup = BeautifulSoup(r.text, "html.parser")
+            soup = BeautifulSoup(r.text, "html5lib")
             levels = extractData(soup)
             # For each level entry, save. We can do it in parallel.
             POOL.map(lambda level: saveData(author, game, level), levels)
@@ -254,9 +255,13 @@ def main(author, game):
                 trace("info", "Final id has been found. Enjoy your archive!")
                 break
             # Get the url to the next page of assets
-            nextSoup = soup.find("li", class_="next")
-            next = nextSoup.find("a", href=True)["href"]
-            nextUrl = "http://www.kongregate.com" + next
+            try:
+                nextSoup = soup.find("li", class_="next")
+                next = nextSoup.find("a", href=True)["href"]
+                nextUrl = "http://www.kongregate.com" + next
+            except:
+                print("Error at {}, continuing.".format(nextUrl))
+                break
 
             trace(
                 "info",
