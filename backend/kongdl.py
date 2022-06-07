@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import time
 import zlib
@@ -18,7 +17,7 @@ from backend.checkpoint import State
 
 
 def getUserSettings():
-    with SETTINGS_PATH.open( "r") as settings:
+    with SETTINGS_PATH.open("r") as settings:
         return json.load(settings)
 
 
@@ -29,7 +28,7 @@ ZLIB_COMPRESS = USER_SETTINGS["zlibCompression"]
 ARCHIVE_DIR = Path("Archived Levels")
 POOL = ThreadPool(10)
 # How often we save - how many iterations between a save.
-NUM_TO_SAVE=10
+NUM_TO_SAVE = 10
 
 
 # Displays percentage based on goal and current value
@@ -39,7 +38,7 @@ def percentDone(current, goal):
 
 # Gets the last two components from the path of a url.
 def cleanGameUrl(url):
-    path = urlparse(url).path.split('/')
+    path = urlparse(url).path.split("/")
     return {"author": path[-2], "game": path[-1]}
 
 
@@ -60,7 +59,7 @@ def getThumb(url, wait_sec: float = 0.1, max_tries=10):
     # Quick syntax for a for-loop. Value is discarded, because we don't need it.
     for __ in range(max_tries):
         try:
-            r = requests.get(url)
+            r = requests.get(url.find("img")["src"].split("?")[0])
             if r.status_code == 200:
                 return b64encode(r.content).decode("ascii")
             trace("warn", "getThumb status_code: %s, retrying..." % r.status_code)
@@ -94,8 +93,8 @@ def getContentTypes(author, game):
     deduped = set()
     for res in results2:
         # The content type will be surrounded by quotes.
-        temp = res[res.index('"')+1:]
-        deduped.add(temp[:temp.index('"')])
+        temp = res[res.index('"') + 1 :]
+        deduped.add(temp[: temp.index('"')])
     return list(deduped)
 
 
@@ -140,12 +139,11 @@ def extractData(soup):
     thumbs = []
     if ENABLE_THUMBS:
         # TODO: this search pattern looks *very* brittle.
-        # Furthermore: couldn't the work of find()ing be done in-pool rather than in-generator?
-        thumbUrls = (thumb.find("img")["src"].split("?")[0] for thumb in subSoup)
+        thumbUrls = (thumb for thumb in subSoup)
         thumbs = getThumbs(thumbUrls)
 
     return POOL.starmap(
-        extractData_inner, zip(*padAll([levels, meta, plays, ratings, thumbs]))
+        extractData_inner, padAll([levels, meta, plays, ratings, thumbs])
     )
 
 
@@ -180,27 +178,28 @@ def extractData_inner(level, meta, plays, rating, thumb):
     return levelInfo
 
 
-# Takes an iterable of arrays, and pads all of them to the length of the longest one.
+# Takes an iterable of iterables, and pads all of them to the length of the longest one.
 # Padding occurs with padWith, which is None by default.
-def padAll(arrays, padWith=None):
-    highlen = max((len(arr) for arr in arrays))
-    return [arr + [padWith] * (highlen - len(arr)) for arr in arrays]
+def padAll(iterables, padWith=None):
+    iter_iterables = [iter(i) for i in iterables]
+    currentResult = [next(gen, None) for gen in iter_iterables]
+    while currentResult.count(None) != len(currentResult):
+        yield currentResult
+        currentResult = [next(gen, None) for gen in iter_iterables]
 
 
 # Make sure every folder required exists
 def folderCheck(author, game):
     targetDir = ARCHIVE_DIR / author / game
     if not targetDir.exists():
-        os.makedirs(targetDir)
+        targetDir.mkdir(parents=True, exist_ok=True)
 
 
 # Saves level entry
 def saveData(author, game, data):
     safeQuit = False
     try:
-        dataDir = (
-            ARCHIVE_DIR / author / game / "{}.json".format(str(data["id"]))
-        )
+        dataDir = ARCHIVE_DIR / author / game / "{}.json".format(str(data["id"]))
         with dataDir.open("wb") as writeData:
             if ZLIB_COMPRESS == True:
                 writeData.write(zlib.compress(json.dumps(data)))
@@ -226,6 +225,7 @@ def retryRequest(url, params={}, wait_sec: float = 0.1, max_tries=10):
             trace("warn", "retryRequest ConnectionError, retrying...")
         time.sleep(wait_sec)
 
+
 def doContentType(templateUrl, author, game, contentType):
     state = State.load(author, game, contentType)
     if state == None:
@@ -240,9 +240,9 @@ def doContentType(templateUrl, author, game, contentType):
     # Not providing srid brings us to first page
     while True:
         state.toNextSave += 1
-        if (state.toNextSave >= NUM_TO_SAVE):
+        if state.toNextSave >= NUM_TO_SAVE:
             state.save()
-        
+
         r = retryRequest(state.nextUrl)
         soup = BeautifulSoup(r.text, "html5lib")
         levels = extractData(soup)
@@ -268,6 +268,7 @@ def doContentType(templateUrl, author, game, contentType):
         )
     state.save()
 
+
 # Fetches all currently active asset id's
 def main(author, game):
     contentTypes = getContentTypes(author, game)
@@ -275,4 +276,7 @@ def main(author, game):
     folderCheck(author, game)
     # Pre-template the first two, they don't change.
     templateUrl = "http://www.kongregate.com/games/%s/%s" % (author, game)
-    POOL.starmap(doContentType, [(templateUrl, author, game, contentType) for contentType in contentTypes])
+    POOL.starmap(
+        doContentType,
+        [(templateUrl, author, game, contentType) for contentType in contentTypes],
+    )
