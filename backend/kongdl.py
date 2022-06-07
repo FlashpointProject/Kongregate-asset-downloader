@@ -10,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from backend.debugLib import trace
+from backend.checkpoint import State
 
 # TODO: make all I/O async?
 
@@ -24,8 +25,9 @@ USER_SETTINGS = getUserSettings()
 ENABLE_THUMBS = USER_SETTINGS["alsoDownloadThumbnails"]
 ZLIB_COMPRESS = USER_SETTINGS["zlibCompression"]
 ARCHIVE_DIR = "Archived Levels"
-# TODO: WTF is this for? Just thumbnails? Nope, I'm using this for other paralellizable tasks.
 POOL = ThreadPool(10)
+# How often we save - how many iterations between a save.
+NUM_TO_SAVE=10
 
 
 # Displays percentage based on goal and current value
@@ -227,6 +229,47 @@ def retryRequest(url, params={}, wait_sec: float = 0.1, max_tries=10):
             trace("warn", "retryRequest ConnectionError, retrying...")
         time.sleep(wait_sec)
 
+def doContentType(templateUrl, author, game, contentType):
+    state = State.load(author, game, contentType)
+    if state == None:
+        # Template in the last field - the one that changes.
+        nextUrl = templateUrl + "/shared/%s" % contentType
+        r = retryRequest(nextUrl, params={"srid": "last"})
+        soup = BeautifulSoup(r.text, "html5lib")
+        levels = extractData(soup)
+        # Obtain lowest id while at last page.
+        finalId = min([int(level["id"]) for level in levels])
+        state = State(author, game, contentType, finalId, nextUrl)
+    # Not providing srid brings us to first page
+    while True:
+        state.toNextSave += 1
+        if (state.toNextSave >= NUM_TO_SAVE):
+            state.save()
+        
+        r = retryRequest(state.nextUrl)
+        soup = BeautifulSoup(r.text, "html5lib")
+        levels = extractData(soup)
+        # For each level entry, save. We can do it in parallel.
+        POOL.map(lambda level: saveData(state.author, state.game, level), levels)
+        lowestId = min((int(level["id"]) for level in levels))
+        if lowestId == state.finalId:
+            trace("info", "Final id has been found. Enjoy your archive!")
+            break
+        # Get the url to the next page of assets
+        try:
+            nextSoup = soup.find("li", class_="next")
+            next = nextSoup.find("a", href=True)["href"]
+            state.nextUrl = "http://www.kongregate.com" + next
+        except:
+            print("Error at {}, continuing.".format(state.nextUrl))
+            break
+
+        trace(
+            "info",
+            "Downloading %s/%s/%s: " % (state.author, state.game, state.contentType)
+            + percentDone(lowestId, state.finalId),
+        )
+    state.save()
 
 # Fetches all currently active asset id's
 def main(author, game):
@@ -235,36 +278,4 @@ def main(author, game):
     folderCheck(author, game)
     # Pre-template the first two, they don't change.
     templateUrl = "http://www.kongregate.com/games/%s/%s" % (author, game)
-    for contentType in contentTypes:
-        # Template in the last field - the one that changes.
-        nextUrl = templateUrl + "/shared/%s" % contentType
-        r = retryRequest(nextUrl, params={"srid": "last"})
-        soup = BeautifulSoup(r.text, "html5lib")
-        levels = extractData(soup)
-        # Obtain lowest id while at last page.
-        finalId = min([int(level["id"]) for level in levels])
-        # Not providing srid brings us to first page
-        while True:
-            r = retryRequest(nextUrl)
-            soup = BeautifulSoup(r.text, "html5lib")
-            levels = extractData(soup)
-            # For each level entry, save. We can do it in parallel.
-            POOL.map(lambda level: saveData(author, game, level), levels)
-            lowestId = min((int(level["id"]) for level in levels))
-            if lowestId == finalId:
-                trace("info", "Final id has been found. Enjoy your archive!")
-                break
-            # Get the url to the next page of assets
-            try:
-                nextSoup = soup.find("li", class_="next")
-                next = nextSoup.find("a", href=True)["href"]
-                nextUrl = "http://www.kongregate.com" + next
-            except:
-                print("Error at {}, continuing.".format(nextUrl))
-                break
-
-            trace(
-                "info",
-                "Downloading %s/%s/%s: " % (author, game, contentType)
-                + percentDone(lowestId, finalId),
-            )
+    POOL.starmap(doContentType, [(templateUrl, author, game, contentType) for contentType in contentTypes])
