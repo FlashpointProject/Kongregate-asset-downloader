@@ -4,7 +4,9 @@ import re
 import time
 import zlib
 from base64 import b64encode
+from pathlib import Path
 from multiprocessing.pool import ThreadPool
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -16,15 +18,15 @@ from backend.checkpoint import State
 
 
 def getUserSettings():
-    with open(SETTINGS_PATH, "r") as settings:
-        return json.loads(settings.read())
+    with SETTINGS_PATH.open( "r") as settings:
+        return json.load(settings)
 
 
-SETTINGS_PATH = "settings.txt"
+SETTINGS_PATH = Path("settings.txt")
 USER_SETTINGS = getUserSettings()
 ENABLE_THUMBS = USER_SETTINGS["alsoDownloadThumbnails"]
 ZLIB_COMPRESS = USER_SETTINGS["zlibCompression"]
-ARCHIVE_DIR = "Archived Levels"
+ARCHIVE_DIR = Path("Archived Levels")
 POOL = ThreadPool(10)
 # How often we save - how many iterations between a save.
 NUM_TO_SAVE=10
@@ -35,10 +37,10 @@ def percentDone(current, goal):
     return "%.2f%% done" % ((float(goal) / float(current)) * 100)
 
 
-# Sanitizes the game url
+# Gets the last two components from the path of a url.
 def cleanGameUrl(url):
-    url = url.split("/")
-    return {"author": url[4], "game": url[5]}
+    path = urlparse(url).path.split('/')
+    return {"author": path[-2], "game": path[-1]}
 
 
 # Returns the text inside brackets
@@ -187,14 +189,9 @@ def padAll(arrays, padWith=None):
 
 # Make sure every folder required exists
 def folderCheck(author, game):
-    if not os.path.exists(ARCHIVE_DIR):
-        os.makedirs(ARCHIVE_DIR)
-    authorDir = ARCHIVE_DIR + "/" + author
-    gameDir = authorDir + "/" + game
-    if author not in os.listdir(ARCHIVE_DIR):
-        os.mkdir(authorDir)
-    if game not in os.listdir(authorDir):
-        os.mkdir(gameDir)
+    targetDir = ARCHIVE_DIR / author / game
+    if not targetDir.exists():
+        os.makedirs(targetDir)
 
 
 # Saves level entry
@@ -202,9 +199,9 @@ def saveData(author, game, data):
     safeQuit = False
     try:
         dataDir = (
-            ARCHIVE_DIR + "/" + author + "/" + game + "/" + str(data["id"]) + ".json"
+            ARCHIVE_DIR / author / game / "{}.json".format(str(data["id"]))
         )
-        with open(dataDir, "wb") as writeData:
+        with dataDir.open("wb") as writeData:
             if ZLIB_COMPRESS == True:
                 writeData.write(zlib.compress(json.dumps(data)))
             else:

@@ -20,14 +20,14 @@ class State:
         if not savepath.exists():
             return None
         
-        with open(savepath, 'r') as savefile:
+        with savepath.open('r') as savefile:
             outDict = json.load(savefile)
         return cls(author, game, contentType, outDict["finalId"], outDict["nextUrl"])
     
     def save(self):
         if not self.savepath.exists():
             os.makedirs(self.savepath.parent)
-        with open(self.savepath, 'w') as savefile:
+        with self.savepath.open('w') as savefile:
             json.dump({
                 "finalId": self.finalId,
                 "nextUrl": self.nextUrl
